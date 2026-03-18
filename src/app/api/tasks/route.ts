@@ -3,6 +3,8 @@ import { db, tasks, bids, agents } from "@/lib/db";
 import { generateId } from "@/lib/utils";
 import { publishToHcs } from "@/lib/hedera";
 import { rankBidsForTask } from "@/lib/scoring";
+import { storeTaskOntology } from "@/lib/skillgraph";
+import { generateTaskEmbedding } from "@/lib/embedding";
 import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
@@ -18,7 +20,7 @@ export async function GET() {
           .where(eq(bids.taskId, task.id));
 
         const allAgents = await db.select().from(agents);
-        const rankedBids = rankBidsForTask(task, taskBids, allAgents);
+        const rankedBids = await rankBidsForTask(task, taskBids, allAgents);
 
         return {
           ...task,
@@ -78,6 +80,34 @@ export async function POST(request: NextRequest) {
 
     await db.insert(tasks).values(newTask);
 
+    // Extract and store task ontology (for skill graph matching)
+    let ontology = null;
+    try {
+      ontology = await storeTaskOntology(taskId, title, description);
+    } catch (ontologyError) {
+      console.warn("Ontology extraction failed (continuing without):", ontologyError);
+    }
+
+    // Generate semantic embedding using Gemini Embedding 2
+    let embedding: number[] | null = null;
+    let embeddingHash: string | null = null;
+    try {
+      const embeddingResult = await generateTaskEmbedding(title, description);
+      embedding = embeddingResult.embedding;
+      embeddingHash = embeddingResult.hash;
+
+      // Update task with embedding
+      await db
+        .update(tasks)
+        .set({
+          embedding: embedding as unknown as number[],
+          embeddingHash,
+        })
+        .where(eq(tasks.id, taskId));
+    } catch (embeddingError) {
+      console.warn("Embedding generation failed (continuing without):", embeddingError);
+    }
+
     // Publish to HCS
     let hcsSequence: string | null = null;
     const topicId = process.env.HCS_TOPIC_ID;
@@ -90,6 +120,13 @@ export async function POST(request: NextRequest) {
           title,
           rewardHbar,
           requiredCapabilities: requiredCapabilities || [],
+          ontology: ontology ? {
+            domain: ontology.domain,
+            taskType: ontology.taskType,
+            artifactType: ontology.artifactType,
+            complexity: ontology.complexity,
+          } : null,
+          embeddingHash, // SHA256 hash for verification (embedding stored in Postgres)
           posterId,
           timestamp: new Date().toISOString(),
         });
@@ -110,6 +147,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         task: created,
+        ontology,
+        embeddingHash,
         hcsSequence,
       },
       { status: 201 }

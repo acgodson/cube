@@ -38,7 +38,7 @@ export async function POST(
     }
 
     const allAgents = await db.select().from(agents);
-    const rankedBids = rankBidsForTask(task, taskBids, allAgents);
+    const rankedBids = await rankBidsForTask(task, taskBids, allAgents);
 
     // Select the top-ranked bid
     const winner = rankedBids[0];

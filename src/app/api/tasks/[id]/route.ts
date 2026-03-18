@@ -19,7 +19,7 @@ export async function GET(
     // Get all related data
     const taskBids = await db.select().from(bids).where(eq(bids.taskId, id));
     const allAgents = await db.select().from(agents);
-    const rankedBids = rankBidsForTask(task, taskBids, allAgents);
+    const rankedBids = await rankBidsForTask(task, taskBids, allAgents);
 
     const results = await db
       .select()

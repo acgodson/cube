@@ -11,6 +11,8 @@ import { generateId } from "@/lib/utils";
 import { publishToHcs } from "@/lib/hedera";
 import { uploadSkillSnapshot } from "@/lib/ipfs/client";
 import { calculateScoreDelta } from "@/lib/scoring";
+import { createMemoryCommit, getTaskOntology } from "@/lib/skillgraph";
+import { extractOntology } from "@/lib/ontology";
 import type { SkillSnapshot } from "@/lib/types";
 import { eq, sql } from "drizzle-orm";
 
@@ -142,12 +144,32 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create skill snapshot and upload to IPFS
+    // Create memory commit (skill graph update) - THE CORE INNOVATION
+    let memoryCommitResult = null;
     let snapshot = null;
     let ipfsCid = null;
 
-    if (decision === "accepted") {
-      try {
+    try {
+      // Get task ontology (or extract it)
+      let ontology = await getTaskOntology(taskId);
+      if (!ontology) {
+        ontology = extractOntology(task.title, task.description);
+      }
+
+      // Create memory commit - this updates skill graph, publishes to HCS, and stores on IPFS
+      memoryCommitResult = await createMemoryCommit({
+        agentId: result.agentId,
+        taskId,
+        ontology,
+        outcome: decision === "accepted" ? "success" : "failure",
+        confidence,
+        validatorId,
+      });
+
+      ipfsCid = memoryCommitResult.ipfsCid;
+
+      // Also create legacy skill snapshot for backwards compatibility
+      if (decision === "accepted") {
         const snapshotData: SkillSnapshot = {
           agentId: result.agentId,
           taskId,
@@ -158,9 +180,6 @@ export async function POST(request: NextRequest) {
           timestamp: new Date().toISOString(),
         };
 
-        // Upload to IPFS
-        ipfsCid = await uploadSkillSnapshot(snapshotData);
-
         const snapshotId = generateId("snap");
         snapshot = {
           id: snapshotId,
@@ -169,35 +188,13 @@ export async function POST(request: NextRequest) {
           resultId: task.resultId,
           validationId,
           scoreDelta: String(scoreDelta),
-          ipfsCid,
+          ipfsCid: ipfsCid || "",
         };
 
         await db.insert(skillSnapshots).values(snapshot);
-
-        // Publish snapshot anchor to HCS
-        if (topicId) {
-          try {
-            const snapshotHcs = await publishToHcs(topicId, {
-              eventType: "SKILL_SNAPSHOT_ANCHORED",
-              snapshotId,
-              agentId: result.agentId,
-              taskId,
-              ipfsCid,
-              scoreDelta,
-              timestamp: new Date().toISOString(),
-            });
-
-            await db
-              .update(skillSnapshots)
-              .set({ hcsSequence: snapshotHcs.sequenceNumber })
-              .where(eq(skillSnapshots.id, snapshotId));
-          } catch (e) {
-            console.warn("HCS snapshot anchor failed:", e);
-          }
-        }
-      } catch (ipfsError) {
-        console.warn("IPFS upload failed (continuing without):", ipfsError);
       }
+    } catch (commitError) {
+      console.warn("Memory commit failed (continuing without):", commitError);
     }
 
     const [created] = await db
@@ -223,6 +220,7 @@ export async function POST(request: NextRequest) {
         snapshot,
         ipfsCid,
         hcsSequence,
+        memoryCommit: memoryCommitResult,
       },
       { status: 201 }
     );
