@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
-import { db, users } from "./db";
-import { eq } from "drizzle-orm";
+import { db, users, agents } from "./db";
+import { and, eq, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 const JWT_SECRET = new TextEncoder().encode(
@@ -40,6 +40,16 @@ export async function createSession(hederaAccountId: string): Promise<string> {
       .set({ lastLoginAt: new Date() })
       .where(eq(users.id, user[0].id));
   }
+
+  await db
+    .update(agents)
+    .set({ ownerId: user[0].id, updatedAt: new Date() })
+    .where(
+      and(
+        eq(agents.walletAddress, hederaAccountId),
+        isNull(agents.ownerId)
+      )
+    );
 
   const token = await new SignJWT({
     userId: user[0].id,

@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { useEffect, useState } from "react";
+import { WalletStatus } from "@/components/WalletStatus";
 
 export default function DashboardLayout({
   children,
@@ -40,9 +42,11 @@ export default function DashboardLayout({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center space-x-8">
-              <img
+              <Image
                 src="/cube-logo-transparent.png"
                 alt="Cube"
+                width={96}
+                height={32}
                 className="h-8 w-auto"
               />
               <Link
@@ -63,6 +67,9 @@ export default function DashboardLayout({
               >
                 Approvals
               </Link>
+            </div>
+            <div className="flex items-center">
+              <WalletStatus mode="dashboard" />
             </div>
           </div>
         </div>

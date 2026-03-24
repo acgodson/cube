@@ -6,6 +6,7 @@ import { rankBidsForTask } from "@/lib/scoring";
 import { storeTaskOntology } from "@/lib/skillgraph";
 import { generateTaskEmbedding } from "@/lib/embedding";
 import { notifyMatchingAgents, DEFAULT_GATEWAY_CONFIG } from "@/lib/gateway";
+import { getSession } from "@/lib/auth";
 import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
@@ -43,6 +44,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await getSession();
     const body = await request.json();
 
     const {
@@ -55,7 +57,10 @@ export async function POST(request: NextRequest) {
       requiredCapabilities,
     } = body;
 
-    if (!title || !description || !rewardHbar || !posterId || !posterWallet) {
+    const resolvedPosterId = session?.userId || posterId;
+    const resolvedPosterWallet = session?.hederaAccountId || posterWallet;
+
+    if (!title || !description || !rewardHbar || !resolvedPosterId || !resolvedPosterWallet) {
       return NextResponse.json(
         {
           error:
@@ -73,8 +78,8 @@ export async function POST(request: NextRequest) {
       description,
       rewardHbar: String(rewardHbar),
       deadlineAt: deadlineAt ? new Date(deadlineAt) : null,
-      posterId,
-      posterWallet,
+      posterId: resolvedPosterId,
+      posterWallet: resolvedPosterWallet,
       requiredCapabilities: requiredCapabilities || [],
       status: "open",
     };
@@ -127,8 +132,8 @@ export async function POST(request: NextRequest) {
             artifactType: ontology.artifactType,
             complexity: ontology.complexity,
           } : null,
-          embeddingHash, // SHA256 hash for verification (embedding stored in Postgres)
-          posterId,
+          embeddingHash,
+          posterId: resolvedPosterId,
           timestamp: new Date().toISOString(),
         });
         hcsSequence = hcsResult.sequenceNumber;

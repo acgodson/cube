@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { signTransaction, initHashConnect } from "@/lib/hashpack";
+import { useHederaWallet } from "@/components/providers/HederaWalletProvider";
 
 interface Approval {
   id: string;
@@ -15,6 +15,8 @@ interface Approval {
 }
 
 export default function ApprovalsPage() {
+  const { accountId, connect, initializing, sign, walletType } =
+    useHederaWallet();
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
@@ -42,18 +44,14 @@ export default function ApprovalsPage() {
   async function handleApprove(approval: Approval) {
     try {
       setProcessing(approval.id);
+      const walletAccountId =
+        accountId ?? (await connect("walletconnect")).accountId;
 
-      await initHashConnect();
-
-      const hederaAccountId = localStorage.getItem("hederaAccountId");
-      if (!hederaAccountId) {
+      if (!walletAccountId) {
         throw new Error("No account connected");
       }
 
-      const signedTxBytes = await signTransaction(
-        hederaAccountId,
-        approval.unsignedTxBytes
-      );
+      const signedTxBytes = await sign(walletAccountId, approval.unsignedTxBytes);
 
       const res = await fetch(`/api/approvals/${approval.id}/approve`, {
         method: "POST",
@@ -66,8 +64,8 @@ export default function ApprovalsPage() {
       }
 
       await loadApprovals();
-    } catch (error: any) {
-      alert(error.message || "Failed to approve transaction");
+    } catch (error: unknown) {
+      alert(error instanceof Error ? error.message : "Failed to approve transaction");
     } finally {
       setProcessing(null);
     }
@@ -86,8 +84,8 @@ export default function ApprovalsPage() {
       }
 
       await loadApprovals();
-    } catch (error: any) {
-      alert(error.message || "Failed to reject approval");
+    } catch (error: unknown) {
+      alert(error instanceof Error ? error.message : "Failed to reject approval");
     } finally {
       setProcessing(null);
     }
@@ -108,6 +106,13 @@ export default function ApprovalsPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold mb-6">Pending Approvals</h1>
+      <p className="text-sm text-gray-400 mb-6">
+        {initializing
+          ? "Initializing wallet connector..."
+          : accountId
+            ? `Connected wallet: ${accountId}${walletType ? ` via ${walletType}` : ""}`
+            : "Connect a Hedera wallet when you approve a transaction."}
+      </p>
 
       {approvals.length === 0 ? (
         <div className="text-center py-12 text-gray-400">

@@ -55,12 +55,16 @@ export async function sendTaskToOpenClaw(
 
     if (!response.ok) {
       const text = await response.text();
-      console.error(`[OpenClaw] Webhook failed for ${agentId}:`, response.status, text);
+      console.error(`❌ [Cube → Agent] Webhook failed for ${agentId}: HTTP ${response.status}`);
+      console.error(`   Error: ${text}`);
       return { success: false, error: `HTTP ${response.status}: ${text}` };
     }
 
-    console.log(`[OpenClaw] Task sent to ${agentId}: ${taskOffer.task.title}`);
-    // Track successful delivery
+    console.log(`✅ [Cube → Agent] Task offer sent to ${agentId}`);
+    console.log(`   📋 Task: "${taskOffer.task.title}"`);
+    console.log(`   💰 Reward: ${taskOffer.task.reward} HBAR`);
+    console.log(`   📊 Match Score: ${(taskOffer.semanticMatch * 100).toFixed(1)}%`);
+
     await recordWebhookSuccess(agentId);
     return { success: true };
   } catch (error) {

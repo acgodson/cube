@@ -12,9 +12,7 @@ import { publishToHcs } from "@/lib/hedera";
 import { uploadSkillSnapshot } from "@/lib/ipfs/client";
 import { extractOntology, type ExtractedOntology } from "@/lib/ontology";
 
-// ============================================
-// TYPES
-// ============================================
+
 
 export interface MemoryCommitData {
   agentId: string;

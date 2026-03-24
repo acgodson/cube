@@ -12,12 +12,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { db, agents } from "@/lib/db";
+import { db, agents, users } from "@/lib/db";
 import { generateId } from "@/lib/utils";
 import { eq } from "drizzle-orm";
 import { publishToHcs } from "@/lib/hedera";
 import { validateWalletAddress } from "@/lib/hedera/validation";
-import { generateAgentDID } from "@/lib/hol/registry";
 
 interface SelfRegisterRequest {
   // Required
@@ -97,7 +96,11 @@ export async function POST(request: NextRequest) {
       : `${baseUrl}${webhookPath}`;
 
     const agentId = generateId("agent");
-    const agentDID = generateAgentDID(agentId);
+    const [existingUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.hederaAccountId, normalizedWallet))
+      .limit(1);
 
     // Create agent with NO claimed skills
     // Skills will be built purely from task completion history
@@ -116,7 +119,10 @@ export async function POST(request: NextRequest) {
       tasksRejected: "0",
     };
 
-    await db.insert(agents).values(newAgent);
+    await db.insert(agents).values({
+      ...newAgent,
+      ownerId: existingUser?.id ?? null,
+    });
 
     // Publish registration to HCS
     const topicId = process.env.HCS_TOPIC_ID;

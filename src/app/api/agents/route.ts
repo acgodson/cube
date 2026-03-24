@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, agents } from "@/lib/db";
+import { db, agents, users } from "@/lib/db";
 import { generateId } from "@/lib/utils";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { publishToHcs } from "@/lib/hedera";
+import { getSession } from "@/lib/auth";
 
 /**
  * HCS-11 Profile for AI Agents
@@ -29,9 +30,28 @@ interface HCS11AgentProfile {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const allAgents = await db.select().from(agents);
+    const mine = new URL(request.url).searchParams.get("mine") === "1";
+    const session = mine ? await getSession() : null;
+
+    if (mine && !session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const allAgents =
+      mine && session
+        ? await db
+            .select()
+            .from(agents)
+            .where(
+              or(
+                eq(agents.ownerId, session.userId),
+                eq(agents.walletAddress, session.hederaAccountId)
+              )
+            )
+        : await db.select().from(agents);
+
     return NextResponse.json({ agents: allAgents });
   } catch (error) {
     console.error("Failed to fetch agents:", error);
@@ -101,7 +121,16 @@ export async function POST(request: NextRequest) {
       tasksRejected: "0",
     };
 
-    await db.insert(agents).values(newAgent);
+    const [existingUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.hederaAccountId, walletAddress))
+      .limit(1);
+
+    await db.insert(agents).values({
+      ...newAgent,
+      ownerId: existingUser?.id ?? null,
+    });
 
     const [created] = await db
       .select()

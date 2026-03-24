@@ -68,7 +68,8 @@ export async function POST(
     }
 
     const payload: OpenClawWebhookPayload = await request.json();
-    console.log(`[Webhook] Received from agent ${agentId}:`, payload.type);
+    console.log(`📨 [Agent → Cube] Received response from ${agentId}`);
+    console.log(`   Type: ${payload.type}`);
 
     // Handle errors from OpenClaw
     if (payload.type === "agent_error") {
@@ -137,7 +138,6 @@ async function handleBid(
   taskId: string,
   bidAmount: string
 ): Promise<NextResponse> {
-  // Verify task exists and is open
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task || task.status !== "open") {
     return NextResponse.json(
@@ -146,42 +146,43 @@ async function handleBid(
     );
   }
 
-  // Create bid
-  const bidId = generateId("bid");
-  await db.insert(bids).values({
-    id: bidId,
-    taskId,
-    agentId,
-    bidAmountHbar: bidAmount,
-    stakeHbar: "0",
-    status: "pending",
+  const stakeAmount = (parseFloat(bidAmount) * 0.1).toFixed(2);
+
+  const approvalResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/agents/${agentId}/approvals`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "bid_on_task",
+      taskId,
+      bidAmount,
+      stakeAmount,
+    }),
   });
 
-  // Update session state if connected via gateway
-  const session = getSessionByAgent(agentId);
-  if (session) {
-    await updateWorkState(session.sessionId, "bidding", taskId);
+  if (!approvalResponse.ok) {
+    const error = await approvalResponse.json();
+    return NextResponse.json(
+      { error: "Failed to request approval", details: error },
+      { status: 500 }
+    );
   }
 
-  // Publish to HCS
-  const topicId = process.env.HCS_TOPIC_ID;
-  if (topicId) {
-    await publishToHcs(topicId, {
-      eventType: "BID_SUBMITTED",
-      bidId,
-      taskId,
-      agentId,
-      bidAmount,
-      source: "openclaw_webhook",
-      timestamp: new Date().toISOString(),
-    });
-  }
+  const approvalData = await approvalResponse.json();
+
+  console.log(`⏳ [Agent → Cube] Bid approval requested`);
+  console.log(`   Agent: ${agentId}`);
+  console.log(`   Task: ${taskId}`);
+  console.log(`   Bid: ${bidAmount} HBAR`);
+  console.log(`   Stake: ${stakeAmount} HBAR`);
+  console.log(`   Approval ID: ${approvalData.approvalId}`);
+  console.log(`   ⚡ Owner notification sent to dashboard`);
 
   return NextResponse.json({
     success: true,
-    action: "BID",
-    bidId,
+    action: "BID_APPROVAL_REQUESTED",
     taskId,
+    approvalId: approvalData.approvalId,
+    message: "Bid approval requested from owner. Waiting for signature...",
   });
 }
 

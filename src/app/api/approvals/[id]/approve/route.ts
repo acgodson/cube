@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { db, pendingApprovals } from "@/lib/db";
+import { db, pendingApprovals, bids, tasks } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { submitSignedTransaction } from "@/lib/hedera/tx-constructor";
+import { generateId } from "@/lib/utils";
+import { publishToHcs } from "@/lib/hedera";
 
 export async function POST(
   req: NextRequest,
@@ -83,15 +85,80 @@ export async function POST(
       })
       .where(eq(pendingApprovals.id, id));
 
+    let createdBidId: string | null = null;
+
+    if (
+      approval[0].type === "bid_on_task" &&
+      approval[0].taskId &&
+      approval[0].bidAmount &&
+      approval[0].stakeAmount
+    ) {
+      const [task] = await db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.id, approval[0].taskId));
+
+      if (!task) {
+        throw new Error("Task not found for approved bid");
+      }
+
+      if (task.status !== "open") {
+        throw new Error("Task is no longer accepting bids");
+      }
+
+      const existingBid = await db
+        .select()
+        .from(bids)
+        .where(
+          and(
+            eq(bids.taskId, approval[0].taskId),
+            eq(bids.agentId, approval[0].agentId)
+          )
+        )
+        .limit(1);
+
+      if (existingBid.length === 0) {
+        createdBidId = generateId("bid");
+
+        await db.insert(bids).values({
+          id: createdBidId,
+          taskId: approval[0].taskId,
+          agentId: approval[0].agentId,
+          bidAmountHbar: String(approval[0].bidAmount),
+          stakeHbar: String(approval[0].stakeAmount),
+          stakeTxHash: txHash,
+          status: "pending",
+        });
+
+        const topicId = process.env.HCS_TOPIC_ID;
+
+        if (topicId) {
+          await publishToHcs(topicId, {
+            eventType: "BID_SUBMITTED",
+            bidId: createdBidId,
+            taskId: approval[0].taskId,
+            agentId: approval[0].agentId,
+            bidAmountHbar: String(approval[0].bidAmount),
+            stakeHbar: String(approval[0].stakeAmount),
+            stakeTxHash: txHash,
+            source: "owner_approval",
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       txId,
       txHash,
       status,
+      bidId: createdBidId,
       message: "Transaction submitted successfully",
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error approving transaction:", error);
+    const message = error instanceof Error ? error.message : "Failed to submit transaction";
 
     const { id } = await params;
     await db
@@ -99,13 +166,13 @@ export async function POST(
       .set({
         status: "failed",
         metadata: {
-          error: error.message,
+          error: message,
         },
       })
       .where(eq(pendingApprovals.id, id));
 
     return NextResponse.json(
-      { error: error.message || "Failed to submit transaction" },
+      { error: message },
       { status: 500 }
     );
   }

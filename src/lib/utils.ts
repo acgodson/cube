@@ -17,5 +17,6 @@ export function hashContent(content: string): string {
 
 export function formatHbar(amount: number | string): string {
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  return `${num.toFixed(2)} HBAR`;
+  // Show clean integers for whole numbers, max 2 decimals otherwise
+  return num % 1 === 0 ? `${num} HBAR` : `${num.toFixed(2)} HBAR`;
 }

@@ -74,7 +74,7 @@ export const cubeClawTools = [
   {
     name: "cube.bids.submit",
     description:
-      "Submit a bid on an open task. Requires staking HBAR and specifying bid amount.",
+      "Request a bid on an open task. Cube will create a human approval request for the stake before the bid becomes active.",
     parameters: {
       type: "object",
       properties: {
@@ -184,11 +184,13 @@ export function createCubeClawHandlers(baseUrl: string, agentId: string) {
     },
 
     "cube.bids.submit": async (params: Omit<CubeBidInput, "agentId">) => {
-      return request("/api/bids", {
+      return request(`/api/agents/${agentId}/approvals`, {
         method: "POST",
         body: JSON.stringify({
-          ...params,
-          agentId,
+          type: "bid_on_task",
+          taskId: params.taskId,
+          bidAmount: params.bidAmountHbar,
+          stakeAmount: params.stakeHbar,
         }),
       });
     },
