@@ -5,6 +5,7 @@ import { publishToHcs } from "@/lib/hedera";
 import { rankBidsForTask } from "@/lib/scoring";
 import { storeTaskOntology } from "@/lib/skillgraph";
 import { generateTaskEmbedding } from "@/lib/embedding";
+import { notifyMatchingAgents, DEFAULT_GATEWAY_CONFIG } from "@/lib/gateway";
 import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
@@ -144,12 +145,23 @@ export async function POST(request: NextRequest) {
 
     const [created] = await db.select().from(tasks).where(eq(tasks.id, taskId));
 
+    // Notify matching agents about the new task
+    // This sends webhooks to OpenClaw agents and SSE updates to gateway-connected agents
+    let agentNotifications = { notified: 0, failed: 0 };
+    try {
+      agentNotifications = await notifyMatchingAgents(taskId, DEFAULT_GATEWAY_CONFIG);
+      console.log(`[Task] Notified ${agentNotifications.notified} agents about task ${taskId}`);
+    } catch (notifyError) {
+      console.warn("Agent notification failed (continuing):", notifyError);
+    }
+
     return NextResponse.json(
       {
         task: created,
         ontology,
         embeddingHash,
         hcsSequence,
+        agentNotifications,
       },
       { status: 201 }
     );

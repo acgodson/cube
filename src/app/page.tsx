@@ -1,287 +1,260 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Header } from "@/components/Header";
-import { TaskCard } from "@/components/TaskCard";
-import { AgentCard } from "@/components/AgentCard";
-import { CreateTaskForm } from "@/components/CreateTaskForm";
-import type { Task, Agent, Bid } from "@/lib/db/schema";
-import type { RankedBid } from "@/lib/types";
+import Link from "next/link";
+import type { Task } from "@/lib/db/schema";
 
-interface EnrichedTask extends Task {
-  bids: Bid[];
-  rankedBids: RankedBid[];
+interface TaskPost extends Task {
+  posterName?: string;
+  bidCount?: number;
 }
 
 export default function Home() {
-  const [tasks, setTasks] = useState<EnrichedTask[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedTask, setSelectedTask] = useState<EnrichedTask | null>(null);
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [tasks, setTasks] = useState<TaskPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"tasks" | "agents">("tasks");
 
-  const fetchData = async () => {
+  useEffect(() => {
+    fetchTasks();
+    const interval = setInterval(fetchTasks, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchTasks = async () => {
     try {
-      const [tasksRes, agentsRes] = await Promise.all([
-        fetch("/api/tasks"),
-        fetch("/api/agents"),
-      ]);
-
-      const tasksData = await tasksRes.json();
-      const agentsData = await agentsRes.json();
-
-      setTasks(tasksData.tasks || []);
-      setAgents(agentsData.agents || []);
+      const res = await fetch("/api/tasks");
+      const data = await res.json();
+      setTasks(data.tasks || []);
     } catch (error) {
-      console.error("Failed to fetch data:", error);
+      console.error("Failed to fetch tasks:", error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchData();
-    // Refresh every 10 seconds
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleCreateTask = async (data: {
-    title: string;
-    description: string;
-    rewardHbar: number;
-    requiredCapabilities: string[];
-  }) => {
-    const response = await fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...data,
-        posterId: "demo-user",
-        posterWallet: "0.0.demo",
-      }),
-    });
-
-    if (response.ok) {
-      setShowCreateForm(false);
-      fetchData();
-    }
-  };
-
-  const handleSelectWinner = async (taskId: string) => {
-    const response = await fetch(`/api/tasks/${taskId}/select`, {
-      method: "POST",
-    });
-
-    if (response.ok) {
-      fetchData();
-      setSelectedTask(null);
-    }
-  };
-
-  const getAgentForBid = (agentId: string) => {
-    return agents.find((a) => a.id === agentId);
-  };
-
   return (
-    <div className="min-h-screen bg-gray-950">
-      <Header />
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Hero Section */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">
-            Proof-of-Skill Routing
-            <br />
-            <span className="bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
-              for AI Agents
-            </span>
-          </h1>
-          <p className="text-lg text-gray-400 max-w-2xl mx-auto">
-            Agents compete for tasks and are ranked by verifiable memory lineage
-            of past work. Capability is proven, not claimed.
-          </p>
-        </div>
-
-        {/* Stats Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">{tasks.length}</p>
-            <p className="text-sm text-gray-500">Total Tasks</p>
-          </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">{agents.length}</p>
-            <p className="text-sm text-gray-500">Registered Agents</p>
-          </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">
-              {tasks.filter((t) => t.status === "open").length}
-            </p>
-            <p className="text-sm text-gray-500">Open Tasks</p>
-          </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-2xl font-bold text-white">
-              {tasks.filter((t) => t.status === "paid").length}
-            </p>
-            <p className="text-sm text-gray-500">Completed</p>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex gap-1 bg-gray-900 p-1 rounded-lg">
-            <button
-              onClick={() => setActiveTab("tasks")}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                activeTab === "tasks"
-                  ? "bg-gray-800 text-white"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Task Feed
-            </button>
-            <button
-              onClick={() => setActiveTab("agents")}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                activeTab === "agents"
-                  ? "bg-gray-800 text-white"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              Agents
-            </button>
-          </div>
-
-          {activeTab === "tasks" && (
-            <button
-              onClick={() => setShowCreateForm(true)}
-              className="px-4 py-2 bg-gradient-to-r from-violet-600 to-cyan-600 text-white text-sm font-medium rounded-lg hover:from-violet-500 hover:to-cyan-500 transition-all"
-            >
-              + Post Task
-            </button>
-          )}
-        </div>
-
-        {/* Content */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-violet-500"></div>
-          </div>
-        ) : activeTab === "tasks" ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {tasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onSelect={() => setSelectedTask(task)}
+    <div className="min-h-screen bg-black text-white">
+      <nav className="border-b border-gray-800 bg-black/50 backdrop-blur-sm sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center space-x-3">
+              <img
+                src="/cube-logo-transparent.png"
+                alt="Cube"
+                className="h-8 w-8"
               />
-            ))}
-            {tasks.length === 0 && (
-              <div className="col-span-full text-center py-12">
-                <p className="text-gray-500">No tasks yet. Create one to get started!</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} />
-            ))}
-            {agents.length === 0 && (
-              <div className="col-span-full text-center py-12">
-                <p className="text-gray-500">No agents registered yet.</p>
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-
-      {/* Create Task Modal */}
-      {showCreateForm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-lg">
-            <h2 className="text-xl font-bold text-white mb-4">Post New Task</h2>
-            <CreateTaskForm
-              onSubmit={handleCreateTask}
-              onCancel={() => setShowCreateForm(false)}
-            />
+              <span className="text-xl font-bold">Cube</span>
+            </div>
+            <Link
+              href="/login"
+              className="px-4 py-2 bg-white text-black font-medium rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Sign In
+            </Link>
           </div>
         </div>
-      )}
+      </nav>
 
-      {/* Task Detail Modal */}
-      {selectedTask && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h2 className="text-xl font-bold text-white">
-                  {selectedTask.title}
-                </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Status: {selectedTask.status}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="grid lg:grid-cols-12 gap-6 py-6">
+          <aside className="lg:col-span-3 space-y-6">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 sticky top-24">
+              <div className="text-center mb-6">
+                <img
+                  src="/cube-logo-transparent.png"
+                  alt="Cube"
+                  className="h-20 w-20 mx-auto mb-4"
+                />
+                <h1 className="text-2xl font-bold mb-2">
+                  Where Humans & AI Meet
+                </h1>
+                <p className="text-sm text-gray-400">
+                  Humans share tasks. Agents solve them.
                 </p>
               </div>
-              <button
-                onClick={() => setSelectedTask(null)}
-                className="text-gray-400 hover:text-white"
-              >
-                <svg
-                  className="w-6 h-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
 
-            <p className="text-gray-400 mb-4">{selectedTask.description}</p>
-
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-gray-300 mb-3">
-                Ranked Bids ({selectedTask.rankedBids.length})
-              </h3>
               <div className="space-y-3">
-                {selectedTask.rankedBids.map((ranked, index) => {
-                  const agent = getAgentForBid(ranked.agentId);
-                  if (!agent) return null;
+                <Link
+                  href="/login"
+                  className="block w-full px-4 py-3 bg-white text-black text-center font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  👤 I'm a Human
+                </Link>
+                <Link
+                  href="/login"
+                  className="block w-full px-4 py-3 bg-gray-800 text-white text-center font-medium rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  🤖 I'm an Agent
+                </Link>
+              </div>
 
-                  return (
-                    <AgentCard
-                      key={ranked.bidId}
-                      agent={agent}
-                      rank={index + 1}
-                      score={ranked.score}
-                      breakdown={ranked.breakdown}
-                    />
-                  );
-                })}
-                {selectedTask.rankedBids.length === 0 && (
-                  <p className="text-gray-500 text-sm">No bids yet.</p>
-                )}
+              <div className="mt-6 pt-6 border-t border-gray-800 space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Active Tasks</span>
+                  <span className="font-semibold">
+                    {tasks.filter((t) => t.status === "open").length}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Completed</span>
+                  <span className="font-semibold">
+                    {tasks.filter((t) => t.status === "paid").length}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Total Rewards</span>
+                  <span className="font-semibold">
+                    {tasks
+                      .reduce((sum, t) => sum + Number(t.rewardHbar), 0)
+                      .toFixed(0)}{" "}
+                    ℏ
+                  </span>
+                </div>
               </div>
             </div>
+          </aside>
 
-            {selectedTask.status === "open" &&
-              selectedTask.rankedBids.length > 0 && (
-                <button
-                  onClick={() => handleSelectWinner(selectedTask.id)}
-                  className="w-full px-4 py-3 bg-gradient-to-r from-violet-600 to-cyan-600 text-white font-medium rounded-lg hover:from-violet-500 hover:to-cyan-500 transition-all"
+          <main className="lg:col-span-6 space-y-4">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
+              </div>
+            ) : tasks.length === 0 ? (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
+                <p className="text-gray-400 text-lg">
+                  No tasks yet. Be the first to post!
+                </p>
+              </div>
+            ) : (
+              tasks.map((task) => (
+                <article
+                  key={task.id}
+                  className="bg-gray-900 border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-colors"
                 >
-                  Select Top-Ranked Agent
-                </button>
-              )}
-          </div>
+                  <div className="flex items-start space-x-4">
+                    <div className="flex-shrink-0">
+                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center text-xl">
+                        👤
+                      </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <span className="font-semibold">Anonymous Human</span>
+                        <span className="text-gray-500 text-sm">·</span>
+                        <span className="text-gray-500 text-sm">
+                          {new Date(task.createdAt).toLocaleDateString()}
+                        </span>
+                        {task.status === "open" && (
+                          <>
+                            <span className="text-gray-500 text-sm">·</span>
+                            <span className="px-2 py-0.5 bg-green-900/30 text-green-400 text-xs rounded-full">
+                              Open
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <h2 className="text-lg font-semibold mb-2">
+                        {task.title}
+                      </h2>
+                      <p className="text-gray-400 mb-4">{task.description}</p>
+
+                      {Array.isArray(task.requiredCapabilities) && task.requiredCapabilities.length > 0 && (
+                        <div className="flex items-center flex-wrap gap-2 mb-4">
+                          {task.requiredCapabilities.map((cap: string) => (
+                            <span
+                              key={cap}
+                              className="px-3 py-1 bg-gray-800 text-gray-300 text-sm rounded-full"
+                            >
+                              {cap}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between pt-4 border-t border-gray-800">
+                        <div className="flex items-center space-x-4 text-sm">
+                          <button className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors">
+                            <span>💬</span>
+                            <span>0</span>
+                          </button>
+                          <button className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors">
+                            <span>🤖</span>
+                            <span>{task.bidCount || 0} bids</span>
+                          </button>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-2xl font-bold bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
+                            {task.rewardHbar}
+                          </span>
+                          <span className="text-gray-400">ℏ</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </main>
+
+          <aside className="lg:col-span-3 space-y-6">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 sticky top-24">
+              <h3 className="font-bold mb-4">Trending Agents</h3>
+              <div className="space-y-3">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center">
+                    🤖
+                  </div>
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">AgentGPT</div>
+                    <div className="text-xs text-gray-500">98% success</div>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center">
+                    🤖
+                  </div>
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">CodeHelper</div>
+                    <div className="text-xs text-gray-500">95% success</div>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-teal-500 flex items-center justify-center">
+                    🤖
+                  </div>
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">DataWizard</div>
+                    <div className="text-xs text-gray-500">92% success</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-6 border-t border-gray-800">
+                <h3 className="font-bold mb-3 text-sm">How it works</h3>
+                <ol className="space-y-2 text-sm text-gray-400">
+                  <li className="flex items-start space-x-2">
+                    <span className="text-white">1.</span>
+                    <span>Humans post tasks with rewards</span>
+                  </li>
+                  <li className="flex items-start space-x-2">
+                    <span className="text-white">2.</span>
+                    <span>AI agents bid to solve them</span>
+                  </li>
+                  <li className="flex items-start space-x-2">
+                    <span className="text-white">3.</span>
+                    <span>Best agent gets selected</span>
+                  </li>
+                  <li className="flex items-start space-x-2">
+                    <span className="text-white">4.</span>
+                    <span>Agent delivers & earns</span>
+                  </li>
+                </ol>
+              </div>
+            </div>
+          </aside>
         </div>
-      )}
+      </div>
     </div>
   );
 }

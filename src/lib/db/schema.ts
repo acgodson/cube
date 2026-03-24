@@ -8,28 +8,46 @@ import {
   vector,
 } from "drizzle-orm/pg-core";
 
-// Agents table
 export const agents = pgTable(
   "agents",
   {
     id: text("id").primaryKey(),
+    ownerId: text("owner_id"),
     name: text("name").notNull(),
     walletAddress: text("wallet_address").notNull(),
     endpointUrl: text("endpoint_url").notNull(),
     status: text("status").notNull().default("active"),
+
+    // NO claimed capabilities - skills are built from history only
+    // This field is kept for routing hints but NOT used for reputation
     capabilities: jsonb("capabilities").notNull().default([]),
+
     model: text("model").notNull(),
     trustScore: numeric("trust_score", { precision: 10, scale: 4 }).notNull().default("0"),
     tasksCompleted: numeric("tasks_completed").notNull().default("0"),
     tasksAccepted: numeric("tasks_accepted").notNull().default("0"),
     tasksChallenged: numeric("tasks_challenged").notNull().default("0"),
     tasksRejected: numeric("tasks_rejected").notNull().default("0"),
+
+    // HOL/HCS-11 integration
+    holUaid: text("hol_uaid"), // If registered on HOL
+    hcsInboundTopicId: text("hcs_inbound_topic_id"), // HCS-10 inbound topic
+    hcsOutboundTopicId: text("hcs_outbound_topic_id"), // HCS-10 outbound topic
+
+    // Presence tracking
+    presenceStatus: text("presence_status").notNull().default("unknown"), // online, offline, unknown
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    lastWebhookFailure: timestamp("last_webhook_failure", { withTimezone: true }),
+    webhookFailureCount: numeric("webhook_failure_count").notNull().default("0"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("agents_wallet_idx").on(table.walletAddress),
     index("agents_status_idx").on(table.status),
+    index("agents_presence_idx").on(table.presenceStatus),
+    index("agents_hol_idx").on(table.holUaid),
   ]
 );
 
@@ -245,6 +263,118 @@ export const memoryCommits = pgTable(
   ]
 );
 
+// ============================================
+// AGENT GATEWAY TABLES (Stateful Connection Management)
+// ============================================
+
+// Agent Sessions - tracks connected agents and their state
+export const agentSessions = pgTable(
+  "agent_sessions",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id").notNull().references(() => agents.id),
+    connectionState: text("connection_state").notNull().default("connected"), // connected, disconnected
+    workState: text("work_state").notNull().default("idle"), // idle, reviewing, bidding, selected, working, submitting
+    currentTaskId: text("current_task_id"),
+    lastPingAt: timestamp("last_ping_at", { withTimezone: true }).notNull().defaultNow(),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    metadata: jsonb("metadata").default({}), // client info, version, etc.
+  },
+  (table) => [
+    index("session_agent_idx").on(table.agentId),
+    index("session_state_idx").on(table.connectionState, table.workState),
+  ]
+);
+
+// Task Result Formats - defines expected output structure per task
+export const taskResultFormats = pgTable(
+  "task_result_formats",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull().references(() => tasks.id),
+    formatType: text("format_type").notNull(), // json, file, text
+    jsonSchema: jsonb("json_schema"), // JSON Schema for validation
+    mimeTypes: jsonb("mime_types").default([]), // ["application/pdf", "image/png"]
+    maxSizeBytes: numeric("max_size_bytes"),
+    maxLength: numeric("max_length"), // for text results
+    instructions: text("instructions"), // human-readable format instructions
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("format_task_idx").on(table.taskId),
+  ]
+);
+
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    hederaAccountId: text("hedera_account_id").notNull().unique(),
+    name: text("name"),
+    email: text("email"),
+    avatarUrl: text("avatar_url"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("users_account_idx").on(table.hederaAccountId),
+  ]
+);
+
+export const pendingApprovals = pgTable(
+  "pending_approvals",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id),
+    agentId: text("agent_id").notNull().references(() => agents.id),
+
+    type: text("type").notNull(),
+
+    taskId: text("task_id"),
+    bidAmount: numeric("bid_amount", { precision: 18, scale: 8 }),
+    stakeAmount: numeric("stake_amount", { precision: 18, scale: 8 }),
+
+    unsignedTxBytes: text("unsigned_tx_bytes").notNull(),
+    transactionId: text("transaction_id").notNull(),
+
+    status: text("status").notNull().default("pending"),
+
+    metadata: jsonb("metadata"),
+
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("approvals_user_idx").on(table.userId),
+    index("approvals_agent_idx").on(table.agentId),
+    index("approvals_status_idx").on(table.status),
+  ]
+);
+
+export const taskOffers = pgTable(
+  "task_offers",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull().references(() => tasks.id),
+    agentId: text("agent_id").notNull().references(() => agents.id),
+    sessionId: text("session_id").references(() => agentSessions.id),
+    semanticScore: numeric("semantic_score", { precision: 5, scale: 4 }).notNull(),
+    status: text("status").notNull().default("pending"),
+    offeredAt: timestamp("offered_at", { withTimezone: true }).notNull().defaultNow(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("offer_task_idx").on(table.taskId),
+    index("offer_agent_idx").on(table.agentId),
+    index("offer_status_idx").on(table.status),
+  ]
+);
+
 // Type exports for use in application code
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
@@ -268,3 +398,9 @@ export type SkillEdge = typeof skillEdges.$inferSelect;
 export type NewSkillEdge = typeof skillEdges.$inferInsert;
 export type MemoryCommit = typeof memoryCommits.$inferSelect;
 export type NewMemoryCommit = typeof memoryCommits.$inferInsert;
+export type AgentSession = typeof agentSessions.$inferSelect;
+export type NewAgentSession = typeof agentSessions.$inferInsert;
+export type TaskResultFormat = typeof taskResultFormats.$inferSelect;
+export type NewTaskResultFormat = typeof taskResultFormats.$inferInsert;
+export type TaskOffer = typeof taskOffers.$inferSelect;
+export type NewTaskOffer = typeof taskOffers.$inferInsert;
